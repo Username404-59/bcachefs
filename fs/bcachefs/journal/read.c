@@ -123,7 +123,8 @@ static void journal_replay_maybe_drop_overwrites(struct bch_fs *c, struct jset *
 {
 	/* Drop overwrites, log entries if we don't need them: */
 	if (c->opts.retain_recovery_info ||
-	    c->opts.journal_rewind)
+	    c->opts.journal_rewind ||
+	    c->opts.scrub_recent_journal_entries)
 		return;
 
 	vstruct_for_each_safe(j, src)

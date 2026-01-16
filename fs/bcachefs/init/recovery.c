@@ -689,7 +689,9 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 
 	bch2_journal_pos_from_member_info_resume(c);
 
-	if (!c->sb.clean || c->opts.retain_recovery_info) {
+	if (!c->sb.clean ||
+	    c->opts.retain_recovery_info ||
+	    c->opts.scrub_recent_journal_entries == BCH_SCRUB_JOURNAL_always) {
 		struct genradix_iter iter;
 		struct journal_replay **i;
 
@@ -839,6 +841,33 @@ use_clean:
 	try(bch2_opts_hooks_pre_set(c));
 
 	try(bch2_sb_set_upgrade_extra(c));
+
+	if (c->opts.scrub_recent_journal_entries &&
+	    (!c->sb.clean ||
+	     c->opts.scrub_recent_journal_entries == BCH_SCRUB_JOURNAL_always)) {
+		u64 rewind_seq = 0;
+		set_bit(BCH_FS_scrub_journal, &c->flags);
+		try(bch2_scrub_journal(c, &rewind_seq));
+		clear_bit(BCH_FS_scrub_journal, &c->flags);
+		if (rewind_seq) {
+			bch_info(c, "journal scrub found bad data, rewinding to seq %llu",
+				 rewind_seq);
+			bch2_journal_log_msg(c, "journal scrub found bad data, rewinding to seq %llu",
+					     rewind_seq);
+			c->opts.journal_rewind = rewind_seq;
+			c->opts.fsck = true;
+
+			bch2_ignore_journal_rewind_errors(c);
+
+			/*
+			 * Re-read journal buckets to pick up entries that
+			 * were dropped during the first read because they
+			 * were older than last_seq:
+			 */
+			try(bch2_journal_reread_for_rewind(c, rewind_seq));
+			try(bch2_journal_keys_sort(c));
+		}
+	}
 
 	try(bch2_run_recovery_passes_startup(c, 0));
 
